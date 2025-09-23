@@ -1,0 +1,27 @@
+#python 的忽略规则
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv
+
+
+#API密钥等敏感信息--非常重要！
+.env
+config.py
+secrets.txt
+
+
+#系统文件
+Thumbs.db
+
+
+
+#IDE文件
+.vscode/
+.idea/
+*.swp
+*.swo

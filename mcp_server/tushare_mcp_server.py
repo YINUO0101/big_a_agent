@@ -1,5 +1,5 @@
 """
-#目标：创建一个自然语言股票查询系统，让用户可以用普通中文提问（比如”查询贵州茅台最近股价“）
+#目标：创建一个自然语言股票查询系统，让用户可以用普通中文提问（比如"查询贵州茅台最近股价"）
 系统就能自动调用Tushare数据并返回答案。
 #为什么用MCP?
 让大模型能够安全，标准化的调用外部工具（比如TushareAPI）
@@ -48,15 +48,20 @@ def get_stock_basic(stock_code):
 
 #4.添加第二个工具函数:获取股票价格
 @mcp.tool()
-def get_stock_price(stock_code):
+def get_stock_price(stock_code, limit=3):
    """
    获取股票最近的价格数据
    调用api.daily获取每日价格数据
+   limit:限制返回天数，默认只返回3天
    错误返回直接是字符串而不是JSON
    """
    try:
        result = api.daily(ts_code=stock_code)
-       return result.to_json(orient='records', force_ascii=False)
+       limited_result = result.head(limit)
+       #只选择关键字段
+       key_columns = ['trade_date', 'open', 'high', 'low', 'close', 'pct_chg']
+       simplified_result = limited_result[key_columns]
+       return simplified_result.to_json(orient='records', force_ascii=False)
    except Exception as e:
        return f"错误；{str(e)}"
 
@@ -65,7 +70,8 @@ def get_stock_price(stock_code):
 def get_realtime_price(stock_code):
     """获取股票实时报价"""
     try:
-        result = api.realtime_price(ts_code=stock_code)
+        # 使用日线数据的最新记录作为实时报价
+        result = api.daily(ts_code=stock_code, limit=1)
         return result.to_json(orient='records', force_ascii=False)
     except Exception as e:
         return json.dumps({'error': str(e)})
@@ -79,7 +85,7 @@ def get_financial_indicator(stock_code, period='20231231'):
     period='20231231' = 默认参数，如果不传period，就用'20231231'
     """
     try:
-        result = api.financial_indicator(ts_code=stock_code, period=period)
+        result = api.fina_indicator(ts_code=stock_code, period=period)
         return result.to_json(orient='records', force_ascii=False)
     except Exception as e:
         return json.dumps({'error': str(e)})
@@ -89,4 +95,3 @@ if __name__ == "__main__":
     mcp.run(transport="stdio")
 
 #用标准输入输出方式启动MCP服务器
-

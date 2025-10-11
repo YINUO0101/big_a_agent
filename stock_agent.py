@@ -6,264 +6,177 @@ LangGraph是什么？
 工作模式？
 用户问题--LangGraph工作流--MCP工具--数据--回答
 """
-from langgraph.graph import StateGraph, END     #工作流管理工具
-from typing import TypedDict, List, Dict, Any   #类型定义工具
-from langchain_core.messages import HumanMessage, SystemMessage #AI对话消息处理
-from langchain_openai import ChatOpenAI   #AI大脑连接工具
-#一些辅助工具
 import asyncio
-import json
 import os
+from typing import Annotated
+
 from dotenv import load_dotenv
+from langchain_deepseek import ChatDeepSeek
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+from langgraph.checkpoint.memory import InMemorySaver
+from typing_extensions import TypedDict
 
-# 加载环境变量，读取.env中的密钥
+# 加载环境变量
 load_dotenv()
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
 
+# 定义状态类 描述智能体的状态结构
 class AgentState(TypedDict):
-    question: str              #用户问题
-    tool_name: str              #要使用哪个工具
-    tool_args: Dict[str, Any]   #工具的设置参数：字典[键，值]
-    tool_result: Any            #工具返回的结果数据
-    success: bool               #是否成功（T/F）
-    answer: str                 #最终给用户的回答
-    conversation_history: List  #对话历史记录
+    messages: Annotated[list, add_messages]
 
-class StockQueryAgent:
-    def __init__(self):
-        # 设置AI大脑
-        self.llm = ChatOpenAI(
-            model="deepseek-chat",
-            temperature=0,        #回答准确度：0表很准确，不随机
-            api_key=os.getenv("OPENAI_API_KEY"),
-            base_url="https://api.deepseek.com/v1"
-        )
-        # 整理工具，贴上标签     基本信息，价格数据，实时报价，财务指标
-        self.tools = {
-            "get_stock_basic": "获取股票基本信息",
-            "get_stock_price": "获取股票历史价格数据",
-            "get_realtime_price": "获取股票实时报价",
-            "get_financial_indicator": "获取财务指标数据"
-        }
 
-    def create_workflow(self):
-        """创建LangGraph工作流"""
-        # 创建一条生产线，用来规定产品规格
-        workflow = StateGraph(AgentState)
-        # 定义节点  三站式：分析要调用的工具--执行工具--包装返回给用户
-        workflow.add_node("analyze_query", self.analyze_user_query)
-        workflow.add_node("execute_tool", self.execute_tool_call)
-        workflow.add_node("generate_response", self.generate_final_response)
-        # 定义边 分析查询--执行工具--生成响应--结束
-        workflow.set_entry_point("analyze_query")
-        workflow.add_edge("analyze_query", "execute_tool")
-        workflow.add_edge("execute_tool", "generate_response")
-        workflow.add_edge("generate_response", END)
-        # 启动生产线
-        return workflow.compile()
-    # 工作站1
-    def analyze_user_query(self, state: AgentState):
-        """分析用户查询，决定要调用什么工具"""
-        tool_call = self.parse_tool_call(state["question"]) #调用问题解析器来解析用户查询
-        return {
-            "tool_name": tool_call["tool_name"],
-            "tool_args": tool_call["tool_args"],
-            "conversation_history": state.get("conversation_history", []) + [HumanMessage(content=state["question"])]
-            # 记录对话
-        }
-
-    # 工作站2：执行工具调用
-    def execute_tool_call(self, state):
-        """执行工具调用 - 模拟数据用于测试"""
-        try:
-            tool_name = state["tool_name"]
-            stock_code = state["tool_args"]["stock_code"]
-
-            print(f"调用工具: {self.tools.get(tool_name, tool_name)}")
-            print(f"股票代码: {stock_code}")
-
-            # 模拟数据 - 用于测试交互
-            mock_data = self.get_mock_stock_data(tool_name, stock_code)
-            return {"tool_result": mock_data, "success": True}
-
-        except Exception as e:
-            error_msg = f"工具调用失败: {str(e)}"
-            print(f"{error_msg}")
-            return {
-                "tool_result": error_msg,
-                "success": False
-            }
-
-    #测试
-    def get_mock_stock_data(self, tool_name: str, stock_code: str):
-        """提供模拟股票数据用于测试"""
-        if tool_name == "get_stock_basic":
-            return {
-                "ts_code": stock_code,
-                "name": "贵州茅台" if stock_code == "600519.SH" else "平安银行",
-                "area": "贵州" if stock_code == "600519.SH" else "广东",
-                "industry": "白酒",
-                "market": "主板",
-                "exchange": "SSE" if stock_code.endswith(".SH") else "SZSE",
-                "list_date": "2001-08-27",
-                "fullname": "贵州茅台酒股份有限公司" if stock_code == "600519.SH" else "平安银行股份有限公司"
-            }
-        elif tool_name == "get_stock_price":
-            return {
-                "ts_code": stock_code,
-                "trade_date": "2024-01-15",
-                "open": 1650.0,
-                "high": 1680.0,
-                "low": 1645.0,
-                "close": 1675.5,
-                "vol": 5000000,
-                "amount": 8375000000
-            }
-        elif tool_name == "get_realtime_price":
-            return {
-                "ts_code": stock_code,
-                "name": "贵州茅台" if stock_code == "600519.SH" else "平安银行",
-                "price": 1675.5,
-                "change": 25.5,
-                "change_percent": 1.55,
-                "volume": 50000,
-                "amount": 83750000,
-                "time": "14:30:00"
-            }
-        elif tool_name == "get_financial_indicator":
-            return {
-                "ts_code": stock_code,
-                "ann_date": "2023-10-28",
-                "end_date": "2023-09-30",
-                "eps": 15.88,
-                "bps": 125.36,
-                "roe": 12.67,
-                "profit_margin": 52.3
-            }
-        else:
-            return {"error": "未知工具类型"}
-    # 工作站3：生成最终回答
-    def generate_final_response(self, state):
-        """生成最终回答"""
-        # 1.成功了吗？
-        if not state.get("success", False):
-            return {"answer": f"查询失败：{state['tool_result']}"}
-
-        #2.打包原始数据给AI
-        data_summary = json.dumps(state["tool_result"], ensure_ascii=False, indent=2)
-        # 3.让AI把原始数据变成自然语言
-        messages = [
-            SystemMessage(content="请将股票数据结果转化为用户容易理解的自然语言描述。"),
-            HumanMessage(content=f"用户问题：{state['question']}"),
-            HumanMessage(content=f"原始数据：{data_summary}"),
-            HumanMessage(content="请用中文回答，突出重点信息。")
-        ]
-        # 获取AI生成的回答，并返回答案
-        try:
-            response = self.llm.invoke(messages)
-            return {"answer": response.content}
-        except Exception as e:
-            # 如果AI调用失败，返回原始数据
-            return {"answer": f"查询结果：\n{data_summary}"}
-
-    def parse_tool_call(self, question: str) -> dict:
-        """智能分析用户问题，决定使用哪个工具"""
-        print(f"正在分析问题...") # 添加开始标记
-        # 简单的规则匹配（默认）
-        stock_code = "000001.SZ"
-
-        # 识别股票
-        if any(keyword in question for keyword in ["茅台", "600519"]):
-            stock_code = "600519.SH"
-        elif any(keyword in question for keyword in ["平安", "000001"]):
-            stock_code = "000001.SZ"
-        elif any(keyword in question for keyword in ["招商", "600036"]):
-            stock_code = "600036.SH"
-        elif any(keyword in question for keyword in ["万科", "000002"]):
-            stock_code = "000002.SZ"
-
-        # 识别工具类型（默认）
-        tool_name = "get_stock_basic"
-
-        if any(keyword in question for keyword in ["实时", "当前", "现在", "最新"]):
-            tool_name = "get_realtime_price"
-        elif any(keyword in question for keyword in ["价格", "股价", "走势", "k线", "行情"]):
-            tool_name = "get_stock_price"
-        elif any(keyword in question for keyword in ["财务", "指标", "业绩", "盈利", "收益"]):
-            tool_name = "get_financial_indicator"
-        elif any(keyword in question for keyword in ["信息", "基本", "概况", "介绍", "公司"]):
-            tool_name = "get_stock_basic"
-
-        print(f"分析完成 - 使用工具: {self.tools[tool_name]}")
-        return {
-            "tool_name": tool_name,
-            "tool_args": {"stock_code": stock_code}
-        }
-
-#实现交互
-async def chat_with_agent():
-    """与Agent进行交互的主函数"""
-    print("=" * 60)
-    print("我可以帮您查询：")
-    print("股票基本信息（公司概况、上市信息等）")
-    print("历史价格数据")
-    print("实时报价")
-    print("财务指标")
-    print("eg：")
-    print("贵州茅台的基本信息")
-    print("查看平安银行的实时价格")
-    print("招商银行的历史行情")
-    print("万科的财务指标")
-    print("=" * 60)
-    # 初始化Agent
+# 初始化MCP工具
+async def setup_mcp_tools():
+    """设置MCP工具"""
     try:
-        agent = StockQueryAgent()
-        workflow = agent.create_workflow()
-        print("Agent初始化成功！")
+        #创建MCP客户端，连接本地运行的MCP服务器
+        client = MultiServerMCPClient({
+            "tushare_mcp_server": {
+                "command": "python",
+                "args": ["mcp_server/tushare_mcp_server.py"],
+                "transport": "stdio",
+            }
+        })
+        #获取工具列表
+        return await client.get_tools()
     except Exception as e:
-        print(f"初始化失败了")
+        print(f"工具初始化失败: {e}")
+        return None
+
+
+# 创建智能体 构建完整的LangGraph工作流
+def create_stock_agent(tools):
+    """创建股票查询智能体
+    参数：tools--从MCP服务器获取的工具列表
+    返回：编译后的智能体图
+    """
+    # 初始化大模型
+    llm = ChatDeepSeek(model="deepseek-chat", api_key=DEEPSEEK_API_KEY)
+    llm_with_tools = llm.bind_tools(tools)
+
+    # 定义节点函数
+    def agent_node(state: AgentState):
+        """智能体节点--用来处理用户输入
+        参数：state--当前的状态，包含消息历史
+        返回：新消息的字典
+        """
+        response = llm_with_tools.invoke(state["messages"])
+        return {"messages": [response]}
+
+    # 创建工具节点，用来执行工具调用
+    tool_node = ToolNode(tools)
+
+    # 判断是否需要调用工具
+    def should_use_tools(state: AgentState):
+        """决定下一步是调用工具还是结束
+        参数：state--当前状态
+        返回：use_tools--需要调用工具
+             end--可以结束对话
+        """
+        last_message = state["messages"][-1]
+        # 检查最后一条信息是否有工具调用
+        if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+            return "use_tools"
+        return "end"
+
+    # 构建图，指定状态类型
+    workflow = StateGraph(AgentState)
+
+    # 添加节点到图中
+    workflow.add_node("agent", agent_node)
+    workflow.add_node("tools", tool_node)
+
+    # 设置边（节点直接的连接关系），开始节点到智能体节点
+    workflow.add_edge(START, "agent")
+
+    #添加条件边 - 根据条件决定下一步走向哪个节点
+    workflow.add_conditional_edges(
+        "agent",
+        should_use_tools,
+        {
+            "use_tools": "tools",
+            "end": END
+        }
+    )
+    workflow.add_edge("tools", "agent")
+
+    # 编译图--创建内存检查点保存器，用于保存对话状态
+    memory = InMemorySaver()
+    return workflow.compile(checkpointer=memory)
+
+
+# 处理用户查询
+async def handle_user_query(query, agent):
+    """处理用户查询并显示结果
+    参数：query -- 用户输入的查询文本
+         agent -- 编译后的智能体图
+    """
+    config = {"configurable": {"thread_id": "user_session"}}
+
+    try:
+        #使用astream方法流式处理用户查询，实时看到处理过程，而不是等待全部完成
+        async for event in agent.astream(
+                {"messages": [{"role": "user", "content": query}]},
+                config
+        ):
+            #遍历事件中每个节点输出
+            for node_name, node_output in event.items():
+                if "messages" in node_output:
+                    message = node_output["messages"][-1]
+
+                    #如果是智能体节点的输出-显示AI的文本回复-显示工具调用信息
+                    if node_name == "agent":
+                        # 显示AI回复
+                        if hasattr(message, 'content') and message.content:
+                            print(f"AI: {message.content}")
+
+                        # 显示工具调用信息
+                        if hasattr(message, 'tool_calls') and message.tool_calls:
+                            for tool_call in message.tool_calls:
+                                print(f"调用工具: {tool_call['name']}")
+
+                    #如果是工具调用信息
+                    elif node_name == "tools":
+                        print("工具执行完成")
+
+    except Exception as e:
+        print(f"处理查询时出错: {e}")
+
+
+# 主函数
+async def main():
+    """主程序"""
+    print("正在启动股票查询系统...")
+
+    # 初始化工具
+    tools = await setup_mcp_tools()
+    if not tools:
+        print("无法启动系统：工具初始化失败")
         return
 
-    # 交互循环
+    # 创建智能体
+    agent = create_stock_agent(tools)
+    print("系统启动完成！")
+
+    # 交互循环 -- 持续接收用户输入
     while True:
         try:
-            print("-" * 40)
-            user_input = input("请输入问题（输入'退出'结束）: ").strip()
+            user_input = input("\n请输入您的查询 (输入 'quit' 退出): ").strip()
 
-            if user_input.lower() in ['退出', 'quit', 'exit']:
+            if user_input.lower() in ['quit', 'exit', 'q']:
                 print("再见！")
                 break
 
-            if not user_input:
-                print("请输入有效的问题")
-                continue
+            if user_input:
+                await handle_user_query(user_input, agent)
 
-            # 处理用户查询
-            print("正在处理请求...")
-            result = await workflow.ainvoke({
-                "question": user_input,
-                "tool_name": "",
-                "tool_args": {},
-                "tool_result": None,
-                "success": False,
-                "answer": "",
-                "conversation_history": []
-            })
-
-            # 显示结果
-            print("=" * 50)
-            print("回答:")
-            print(result.get("answer", "抱歉，没有生成回答"))
-            print("=" * 50)
-
-        except KeyboardInterrupt:
-            print("再见！")
-            break
         except Exception as e:
-            print(f"处理过程中出现错误: {e}")
-            continue
+            print(f"发生错误: {e}")
 
-
-if __name__ == '__main__':
-    # 启动交互式聊天
-    asyncio.run(chat_with_agent())
+#Python程序入口点
+if __name__ == "__main__":
+    asyncio.run(main())
